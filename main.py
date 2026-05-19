@@ -5,12 +5,12 @@ from app.auth.rbac import RBAC
 
 def main():
     print("=" * 60)
-    print("   GENAI SECURITY FOUNDATIONS WORKSPACE: INITIATED   ")
+    print("   GENAI SECURITY FOUNDATIONS WORKSPACE: INITIATED ")
     print("=" * 60)
     
     print("\nProfiles Registered inside Active Session Directory:")
     for uid, account in RBAC.USER_DIRECTORY.items():
-        print(f"  [{uid}] - Role Matrix: {account['role']:<15} Identity name: {account['name']}")
+        print(f"  [{uid}] - Role: {account['role']}")
     print("-" * 60)
     
     user_id = input("\nSelect User Account ID string to launch session context: ").strip()
@@ -18,7 +18,7 @@ def main():
         print("Invalid operator sequence assigned. Program shutting down.")
         sys.exit(1)
         
-    print(f"\nAuthorization validated for: {RBAC.USER_DIRECTORY[user_id]['name']}.")
+    print(f"\nAuthorization validated. Assigned Role: {RBAC.USER_DIRECTORY[user_id]['role']}")
     print("System active. Type 'exit' to cleanly close your channels.\n")
     
     # Intitialize master orchestrator code instance
