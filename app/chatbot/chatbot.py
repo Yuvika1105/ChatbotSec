@@ -44,7 +44,7 @@ from app.audit_logging.audit_logger import AuditLogger
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a helpful, professional HR assistant for NTT DATA.
+SYSTEM_PROMPT = """You are a helpful, professional HR assistant for our company.
 
 Your responsibilities:
 - Answer employee questions about HR policies, leave entitlements, expense

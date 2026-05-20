@@ -17,6 +17,7 @@
 
 import json
 import logging
+import os
 
 from groq import Groq
 
@@ -25,8 +26,6 @@ try:
     LLM_GUARD_AVAILABLE = True
 except ImportError:
     LLM_GUARD_AVAILABLE = False
-
-from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +77,18 @@ class ToxicityChecker:
     # Score above which llm-guard flags the text as toxic.
     TOXICITY_THRESHOLD = 0.5
 
-    def __init__(self) -> None:
+    def __init__(self, groq_api_key: str = None, safeguard_model: str = None) -> None:
+        """
+        Initialize the ToxicityChecker with optional configuration.
+        
+        Parameters
+        ----------
+        groq_api_key : str, optional
+            Groq API key. If not provided, falls back to GROQ_API_KEY environment variable.
+        safeguard_model : str, optional
+            Safeguard model name. If not provided, defaults to gpt-oss-safeguard-20b
+            or uses SAFEGUARD_MODEL environment variable.
+        """
         # Layer 1: local llm-guard Toxicity scanner.
         if LLM_GUARD_AVAILABLE:
             self._layer1_scanner = ToxicityScanner(threshold=self.TOXICITY_THRESHOLD)
@@ -87,7 +97,19 @@ class ToxicityChecker:
             logger.warning("llm-guard not installed. Layer 1 Toxicity scanner will be skipped.")
 
         # Layer 2: Groq client for the remote Safeguard model.
-        self._groq_client = Groq(api_key=Config.GROQ_API_KEY)
+        # Priority: parameter > environment variable > raise error
+        api_key = groq_api_key or os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Groq API key not provided. Set groq_api_key parameter or GROQ_API_KEY environment variable."
+            )
+        self._groq_client = Groq(api_key=api_key)
+        
+        # Store the safeguard model name
+        self._safeguard_model = (
+            safeguard_model 
+            or os.getenv("SAFEGUARD_MODEL", "gpt-oss-safeguard-20b")
+        )
 
     # ── Public interface ─────────────────────────────────────────────────────
 
@@ -188,7 +210,7 @@ class ToxicityChecker:
 
         try:
             response = self._groq_client.chat.completions.create(
-                model=Config.SAFEGUARD_MODEL,
+                model=self._safeguard_model,
                 messages=[{"role": "user", "content": safeguard_prompt}],
                 max_tokens=150,
                 temperature=0.0,

@@ -17,63 +17,43 @@
 #                   LLM06 – Sensitive Information Disclosure
 # NIST AI RMF:      Manage 2.2 – output harm mitigation
 
+# app/guardrails/output_guardrail.py
 import logging
-
 from app.guardrails.toxicity_checker import ToxicityChecker
 from app.guardrails.pii_detector import PIIDetector
 
 logger = logging.getLogger(__name__)
 
-# The message shown to the user when the output is blocked for toxicity.
-# Keep this neutral — do not reveal which specific policy was violated.
 TOXICITY_FALLBACK = (
     "I'm sorry, I can't provide that response. "
     "Please rephrase your question or contact HR directly for assistance."
 )
 
-
 class OutputGuardrail:
-    """Composes toxicity checking and PII masking for LLM output.
-
-    Usage::
-
-        guardrail = OutputGuardrail()
-        result = guardrail.process(llm_response)
-
-        # Always use result["safe_text"] — never the raw LLM output.
-        print(result["safe_text"])
-    """
-
-    def __init__(self) -> None:
-        self._toxicity_checker = ToxicityChecker()
-        self._pii_detector = PIIDetector()
-
-    # ── Public interface ─────────────────────────────────────────────────────
-
-    def process(self, llm_response: str) -> dict:
-        """Run toxicity check then PII masking on *llm_response*.
-
+    def __init__(self, groq_api_key: str = None, prompt_guard_model: str = None, safeguard_model: str = None) -> None:
+        """
+        Initialize the OutputGuardrail with optional configuration.
+        
         Parameters
         ----------
-        llm_response: The raw text returned by the LLM.
-
-        Returns
-        -------
-        dict with keys:
-            safe_text (str)        – The text to return to the user.
-                                     Either the masked response or the
-                                     TOXICITY_FALLBACK string.
-            blocked (bool)         – True when the response was blocked
-                                     for toxicity.
-            toxicity_result (dict) – Full verdict from ToxicityChecker.
-            pii_result (dict)      – Full result from PIIDetector.
-            summary (str)          – One-line audit summary.
+        groq_api_key : str, optional
+            Groq API key. If not provided, falls back to GROQ_API_KEY environment variable.
+        prompt_guard_model : str, optional
+            Prompt Guard model name (for future use).
+        safeguard_model : str, optional
+            Safeguard model name. If not provided, falls back to SAFEGUARD_MODEL environment variable.
         """
+        self._toxicity_checker = ToxicityChecker(
+            groq_api_key=groq_api_key, 
+            safeguard_model=safeguard_model
+        )
+        self._pii_detector = PIIDetector()
+
+    def process(self, llm_response: str) -> dict:
         # ── Step 1: Toxicity check ───────────────────────────────────────────
         toxicity_result = self._toxicity_checker.scan(llm_response)
 
         if not toxicity_result["safe"]:
-            # Block the response immediately.  Do not proceed to PII masking.
             logger.warning(
                 "Output blocked | layer=%s | reason=%s",
                 toxicity_result["layer"],
@@ -96,10 +76,7 @@ class OutputGuardrail:
         pii_result = self._pii_detector.mask(llm_response)
 
         if pii_result["pii_detected"]:
-            logger.info(
-                "PII masked in output | entities=%s",
-                pii_result["entities_found"],
-            )
+            logger.info("PII masked in output | entities=%s", pii_result["entities_found"])
             summary = (
                 f"Output passed toxicity — PII masked "
                 f"({pii_result['entity_count']} entities: "

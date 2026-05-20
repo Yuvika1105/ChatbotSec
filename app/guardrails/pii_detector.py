@@ -15,20 +15,16 @@
 #
 # OWASP LLM Top 10: LLM06 – Sensitive Information Disclosure
 # NIST AI RMF:      Govern 1.6 – data privacy and protection
-
+# app/guardrails/pii_detector.py
 import logging
-
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 logger = logging.getLogger(__name__)
 
-# ── Entity types to detect and mask ─────────────────────────────────────────
-# Add or remove entities based on your organisation's data classification
-# policy.  Full list: https://microsoft.github.io/presidio/supported_entities/
+# List of tracking entities to identify and scrub
 ENTITIES_TO_DETECT = [
-    "PERSON",
     "EMAIL_ADDRESS",
     "PHONE_NUMBER",
     "US_SSN",
@@ -37,99 +33,48 @@ ENTITIES_TO_DETECT = [
     "IP_ADDRESS",
     "LOCATION",
     "DATE_TIME",
-    "NRP",               # Nationality, Religious, Political groups
+    "NRP",
     "MEDICAL_LICENSE",
     "US_BANK_NUMBER",
     "US_PASSPORT",
     "US_DRIVER_LICENSE",
 ]
 
-
 class PIIDetector:
-    """Detects and masks PII in text using Microsoft Presidio.
-
-    Usage::
-
-        detector = PIIDetector()
-
-        # Mask PII in LLM output before showing to user
-        result = detector.mask(llm_response)
-        if result["pii_detected"]:
-            print(f"Masked {result['entity_count']} PII entities")
-        safe_text = result["masked_text"]
-
-        # Detect PII in user input for logging / warning purposes
-        findings = detector.detect(user_input)
-    """
-
     def __init__(self) -> None:
-        # AnalyzerEngine loads the spaCy en_core_web_lg model on first init.
-        # This takes a few seconds on cold start; subsequent calls are fast.
-        # Run `python -m spacy download en_core_web_lg` before first use.
+        # Initialize Presidio's underlying scanning and redacting engines
         self._analyzer = AnalyzerEngine()
         self._anonymizer = AnonymizerEngine()
 
-        # Operator config: replace every detected entity with a typed token.
-        # e.g. <PERSON>, <US_SSN>, <CREDIT_CARD>
-        # Using "replace" (not "hash" or "redact") so that the masked text
-        # remains grammatically readable and the entity type is visible.
+        # Build structural replacement tokens dynamically: e.g., <EMAIL_ADDRESS>
         self._operators = {
             entity: OperatorConfig("replace", {"new_value": f"<{entity}>"})
             for entity in ENTITIES_TO_DETECT
         }
-        # Catch-all for any entity type not in our list.
         self._operators["DEFAULT"] = OperatorConfig("replace", {"new_value": "<REDACTED>"})
 
-    # ── Public interface ─────────────────────────────────────────────────────
-
     def mask(self, text: str) -> dict:
-        """Detect and replace all PII entities in *text*.
-
-        Parameters
-        ----------
-        text: The string to scan (typically the raw LLM response).
-
-        Returns
-        -------
-        dict with keys:
-            masked_text (str)    – Text with PII replaced by tokens.
-            pii_detected (bool)  – True if any PII was found.
-            entity_count (int)   – Number of distinct PII spans found.
-            entities_found (list)– List of entity type strings detected.
-        """
+        # Handle blank text gracefully
         if not text or not text.strip():
-            return {
-                "masked_text": text,
-                "pii_detected": False,
-                "entity_count": 0,
-                "entities_found": [],
-            }
+            return {"masked_text": text, "pii_detected": False, "entity_count": 0, "entities_found": []}
 
+        # Step 1: Scan the text to locate PII positions
         try:
             analyzer_results = self._analyzer.analyze(
                 text=text,
                 language="en",
                 entities=ENTITIES_TO_DETECT,
-                # score_threshold: only flag entities the model is confident about
                 score_threshold=0.5,
             )
         except Exception as exc:
-            logger.error("Presidio analyzer error: %s — returning original text.", exc)
-            return {
-                "masked_text": text,
-                "pii_detected": False,
-                "entity_count": 0,
-                "entities_found": [],
-            }
+            logger.error(f"Presidio analyzer error: {exc} — returning original text.")
+            return {"masked_text": text, "pii_detected": False, "entity_count": 0, "entities_found": []}
 
+        # If no personal data targets are discovered, return clean markers
         if not analyzer_results:
-            return {
-                "masked_text": text,
-                "pii_detected": False,
-                "entity_count": 0,
-                "entities_found": [],
-            }
+            return {"masked_text": text, "pii_detected": False, "entity_count": 0, "entities_found": []}
 
+        # Step 2: Swap the identified secret words with our placeholder brackets
         try:
             anonymized = self._anonymizer.anonymize(
                 text=text,
@@ -138,18 +83,14 @@ class PIIDetector:
             )
             masked_text = anonymized.text
         except Exception as exc:
-            logger.error("Presidio anonymizer error: %s — returning original text.", exc)
+            logger.error(f"Presidio anonymizer error: {exc} — returning original text.")
             masked_text = text
 
+        # Map findings to unique text string tags
         entities_found = list({r.entity_type for r in analyzer_results})
 
         if entities_found:
-            logger.info(
-                "PII masked | entities=%s | original_length=%d | masked_length=%d",
-                entities_found,
-                len(text),
-                len(masked_text),
-            )
+            logger.info(f"PII masked | entities={entities_found} | original_len={len(text)} | masked_len={len(masked_text)}")
 
         return {
             "masked_text": masked_text,
@@ -159,12 +100,7 @@ class PIIDetector:
         }
 
     def detect(self, text: str) -> list[dict]:
-        """Detect PII in *text* without masking — for input scanning / logging.
-
-        Returns a list of dicts, one per detected PII span::
-
-            [{"entity_type": "US_SSN", "score": 0.85, "start": 10, "end": 21}]
-        """
+        # Diagnostic inspection mode — detects coordinates without changing text
         if not text or not text.strip():
             return []
 
@@ -176,7 +112,7 @@ class PIIDetector:
                 score_threshold=0.5,
             )
         except Exception as exc:
-            logger.error("Presidio detect error: %s", exc)
+            logger.error(f"Presidio detect error: {exc}")
             return []
 
         return [
