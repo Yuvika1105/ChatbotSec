@@ -193,7 +193,7 @@ class ToxicityChecker:
 
         try:
             response = self._groq_client.chat.completions.create(
-                model=Config.SAFEGUARD_MODEL,
+                model=self._safeguard_model,
                 messages=[{"role": "user", "content": safeguard_prompt}],
                 max_tokens=150,
                 temperature=0.0,

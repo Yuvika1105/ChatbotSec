@@ -33,7 +33,6 @@ ENTITIES_TO_DETECT = [
     "IBAN_CODE",
     "IP_ADDRESS",
     "LOCATION",
-    "DATE_TIME",
     "NRP",
     "MEDICAL_LICENSE",
     "US_BANK_NUMBER",
@@ -71,8 +70,35 @@ class PIIDetector:
             logger.error(f"Presidio analyzer error: {exc} — returning original text.")
             return {"masked_text": text, "pii_detected": False, "entity_count": 0, "entities_found": []}
 
-        # If no personal data targets are discovered, return clean markers
+        # If no personal data targets are discovered, run a lightweight
+        # regex fallback to catch common formats that Presidio may miss.
         if not analyzer_results:
+            masked_text = text
+
+            ssn_pattern = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+            ssn_matches = len(ssn_pattern.findall(masked_text))
+            if ssn_matches:
+                masked_text = ssn_pattern.sub("<US_SSN>", masked_text)
+
+            cc_pattern = re.compile(r"\b(?:\d[ -]*?){13,16}\b")
+            cc_matches = len(cc_pattern.findall(masked_text))
+            if cc_matches:
+                masked_text = cc_pattern.sub("<CREDIT_CARD>", masked_text)
+
+            if ssn_matches or cc_matches:
+                entities_found = []
+                if ssn_matches:
+                    entities_found.append("US_SSN")
+                if cc_matches:
+                    entities_found.append("CREDIT_CARD")
+                entity_count = ssn_matches + cc_matches
+                return {
+                    "masked_text": masked_text,
+                    "pii_detected": True,
+                    "entity_count": entity_count,
+                    "entities_found": entities_found,
+                }
+
             return {"masked_text": text, "pii_detected": False, "entity_count": 0, "entities_found": []}
 
         # Step 2: Swap the identified secret words with our placeholder brackets

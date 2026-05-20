@@ -40,7 +40,7 @@ from pathlib import Path
 from config import Config
 from app.auth.rbac import RBAC
 from app.guardrails.input_guardrail import InputGuardrail
-from app.guardrails.output_guardrail import OutputGuardrail
+from app.guardrails.output_guardrail import OutputGuardrail, TOXICITY_FALLBACK
 from app.audit_logging.audit_logger import AuditLogger
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ class SecuredChatbot:
                 user_id=user_id,
                 user_role=user_role,
                 user_input=message,
-                final_response=MSG_INJECTION_BLOCKED,
+                final_response=TOXICITY_FALLBACK,
                 guardrail_result={
                     "input": input_tox_result["reason"],
                     "safe": False,
@@ -148,7 +148,7 @@ class SecuredChatbot:
                 pass_or_fail="fail",
                 risk_category="input_toxicity",
             )
-            return MSG_INJECTION_BLOCKED
+            return TOXICITY_FALLBACK
 
         # ── Stage 2: RBAC check — authorisation gate ──────────────────────────
         if not RBAC.can_use_chatbot(user_id):
