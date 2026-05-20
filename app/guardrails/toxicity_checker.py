@@ -27,6 +27,15 @@ try:
 except ImportError:
     LLM_GUARD_AVAILABLE = False
 
+    # Provide a lightweight stub so unit tests can patch ToxicityScanner
+    class ToxicityScanner:
+        def __init__(self, threshold: float = 0.5):
+            self.threshold = threshold
+
+        # llm-guard scan signature (prompt, output) -> (sanitized, is_valid, risk_score)
+        def scan(self, prompt: str = "", output: str = ""):
+            return (output, True, 0.0)
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,17 +87,6 @@ class ToxicityChecker:
     TOXICITY_THRESHOLD = 0.5
 
     def __init__(self, groq_api_key: str = None, safeguard_model: str = None) -> None:
-        """
-        Initialize the ToxicityChecker with optional configuration.
-        
-        Parameters
-        ----------
-        groq_api_key : str, optional
-            Groq API key. If not provided, falls back to GROQ_API_KEY environment variable.
-        safeguard_model : str, optional
-            Safeguard model name. If not provided, defaults to gpt-oss-safeguard-20b
-            or uses SAFEGUARD_MODEL environment variable.
-        """
         # Layer 1: local llm-guard Toxicity scanner.
         if LLM_GUARD_AVAILABLE:
             self._layer1_scanner = ToxicityScanner(threshold=self.TOXICITY_THRESHOLD)
@@ -114,21 +112,6 @@ class ToxicityChecker:
     # ── Public interface ─────────────────────────────────────────────────────
 
     def scan(self, llm_response: str) -> dict:
-        """Run both layers against the LLM output and return a verdict.
-
-        Parameters
-        ----------
-        llm_response: The raw text returned by the LLM.
-
-        Returns
-        -------
-        dict with keys:
-            safe (bool)        – True when the output is clean.
-            reason (str)       – Human-readable explanation.
-            layer (str)        – Which layer flagged the output, or "none".
-            risk_score (float) – Confidence score from the flagging layer.
-            category (str)     – Violation category, or "" if clean.
-        """
         # ── Layer 1: local llm-guard Toxicity scanner ────────────────────────
         layer1_result = self._run_layer1(llm_response)
         if not layer1_result["safe"]:
@@ -210,7 +193,7 @@ class ToxicityChecker:
 
         try:
             response = self._groq_client.chat.completions.create(
-                model=self._safeguard_model,
+                model=Config.SAFEGUARD_MODEL,
                 messages=[{"role": "user", "content": safeguard_prompt}],
                 max_tokens=150,
                 temperature=0.0,

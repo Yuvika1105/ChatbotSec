@@ -18,6 +18,7 @@
 # NIST AI RMF:      Manage 2.2 – harm mitigation controls
 import logging
 import os
+import re
 from groq import Groq
 
 # 1. Set up a basic logger for error monitoring
@@ -33,18 +34,12 @@ except ImportError:
 
 
 class InputGuardrail:
-    def __init__(self, groq_api_key: str = None, prompt_guard_model: str = None) -> None:
-        """
-        Initialize the InputGuardrail with optional configuration.
-        
-        Parameters
-        ----------
-        groq_api_key : str, optional
-            Groq API key. If not provided, falls back to GROQ_API_KEY environment variable.
-        prompt_guard_model : str, optional
-            Prompt Guard model name. If not provided, defaults to meta-llama/llama-prompt-guard-2-86m
-            or uses PROMPT_GUARD_MODEL environment variable.
-        """
+    def __init__(
+        self,
+        groq_api_key: str = None,
+        prompt_guard_model: str = None,
+        fail_closed_on_api_error: bool = True,
+    ) -> None:
         # If llm-guard is installed, set up the local AI scanner model
         if LLM_GUARD_AVAILABLE:
             self._layer1_scanner = PromptInjection(threshold=0.5, model=MODEL_LMSYS_DISTILBERT)
@@ -60,33 +55,60 @@ class InputGuardrail:
                 "Groq API key not provided. Set groq_api_key parameter or GROQ_API_KEY environment variable."
             )
         self._groq_client = Groq(api_key=api_key)
-        
+
         # Store the prompt guard model name
         self._prompt_guard_model = (
-            prompt_guard_model 
-            or os.getenv("PROMPT_GUARD_MODEL", "meta-llama/llama-prompt-guard-2-86m")
+            prompt_guard_model or os.getenv("PROMPT_GUARD_MODEL", "meta-llama/llama-prompt-guard-2-86m")
         )
+
+        # Behaviour when the Groq security API fails: fail-closed by default
+        self._fail_closed_on_api_error = bool(fail_closed_on_api_error)
 
 
     def scan(self, user_input: str) -> dict:
-        """
-        The main security gatekeeper function.
-        Returns a simple dictionary: {"safe": True/False, "reason": "text explanation"}
-        """
         # ────────── LAYER 1: LOCAL SECURITY SCANS ──────────
         
         # If the advanced llm-guard library is NOT available, run our basic text match check
         if self._layer1_scanner is None:
             lower_input = user_input.lower()
-            if "ignore all previous instructions" in lower_input or "dan mode" in lower_input or "[system]" in lower_input:
-                return {"safe": False, "reason": "Blocked by local keyword matching."}
+            # Expanded keyword fallback to catch common jailbreak phrasing
+            keywords = [
+                "ignore all previous instructions",
+                "ignore previous instructions",
+                "forget previous instructions",
+                "override",
+                "system prompt",
+                "new system",
+                "[system]",
+                "dan",
+                "you are dan",
+                "role-play",
+                "role play",
+                "act as",
+                "please respond as",
+                "jailbreak",
+                "ignore instructions",
+            ]
+
+            for kw in keywords:
+                if kw in lower_input:
+                    return {"safe": False, "reason": "Blocked by local keyword matching.", "layer": "layer1_keyword", "risk_score": 1.0}
+
+            # Simple regex to detect attempts to redefine system or instructions
+            if re.search(r"you are\s+\w{1,30}", lower_input):
+                return {"safe": False, "reason": "Blocked by local regex matching for identity/system override.", "layer": "layer1_regex", "risk_score": 1.0}
         
         # If llm-guard IS available, let the local model scan the text
         else:
             try:
                 _sanitized, is_valid, risk_score = self._layer1_scanner.scan(user_input)
                 if not is_valid:
-                    return {"safe": False, "reason": f"Blocked by local AI model (Risk: {risk_score:.2f})."}
+                    return {
+                        "safe": False,
+                        "reason": f"Blocked by local AI model (Risk: {risk_score:.2f}).",
+                        "layer": "layer1_llm_guard",
+                        "risk_score": risk_score,
+                    }
             except Exception as e:
                 logger.error(f"Local AI model failed: {e}. Moving to Layer 2.")
 
@@ -113,12 +135,21 @@ class InputGuardrail:
             verdict = response.choices[0].message.content.strip().upper()
             
             if "INJECTION" in verdict:
-                return {"safe": False, "reason": "Blocked by Groq Prompt Guard 2 API."}
+                return {"safe": False, "reason": "Blocked by Groq Prompt Guard 2 API.", "layer": "layer2_groq_prompt_guard", "risk_score": 1.0}
                 
         except Exception as e:
-            logger.error(f"Groq Security API down: {e}. Allowing input through to main chatbot.")
+            logger.error(f"Groq Security API error: {e}.")
+            if self._fail_closed_on_api_error:
+                return {"safe": False, "reason": "Groq security API failed — blocking input by default.", "layer": "layer2_groq_error", "risk_score": 1.0}
+            else:
+                logger.warning("Groq API failed; continuing with caution (fail-open configured).")
 
 
         # ────────── SUCCESS: INPUT IS SAFE ──────────
         # If neither layer returned a blocked dictionary, the input is clean!
-        return {"safe": True, "reason": "Input passed all security guardrails."}
+        return {
+            "safe": True,
+            "reason": "Input passed all security guardrails.",
+            "layer": "none",
+            "risk_score": 0.0,
+        }

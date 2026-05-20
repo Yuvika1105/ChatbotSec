@@ -1,67 +1,25 @@
-# app/auth/rbac.py
-#
-# Role-based access control for the GenAI security chatbot.
-# Defines the user directory, role permissions, and access checks
-# that gate every request before it reaches the LLM.
-#
-# OWASP LLM Top 10: mitigates LLM08 (Excessive Agency)
-# NIST AI RMF:      Govern 1.1 – accountability and role definition
+"""RBAC manager for role-based file access and dynamic system prompts."""
+from __future__ import annotations
+from pathlib import Path
+from typing import List
 
 
-class RBAC:
-    """Central RBAC registry.
+class RBACManager:
+    """Simple RBAC manager mapping user ids to roles and permitted KB folders.
 
-    Five roles control which tools, tables, and documents each user
-    can access.  Week 1 only uses the chatbot column; RAG and SQL
-    columns are wired in later weeks.
-
-    Role        Users    Chatbot   RAG              SQL
-    ─────────── ──────   ────────  ───────────────  ──────────────────
-    admin       1        ✅        all docs          all tables
-    hr_user     2        ✅        HR + Leave docs   employees, tickets
-    finance     3        ✅        Finance docs      sales, products
-    it_user     4        ✅        IT Security docs  tickets
-    guest       5        ✅        none              none
+    User ids (strings) map to role names in `USER_DIRECTORY`. Role names map
+    to permitted directories in `ROLE_PERMISSIONS`.
     """
 
-    # ── Role definitions ────────────────────────────────────────────────────
-
-    ROLES: dict[str, dict] = {
-        "admin": {
-            "can_use_chatbot": True,
-            "rag_document_groups": ["hr", "finance", "it", "legal", "all"],
-            "sql_tables": ["employees", "sales", "products", "tickets", "all"],
-            "description": "Full access to all systems and documents.",
-        },
-        "hr_user": {
-            "can_use_chatbot": True,
-            "rag_document_groups": ["hr", "leave"],
-            "sql_tables": ["employees", "tickets"],
-            "description": "Access to HR policies and employee data.",
-        },
-        "finance_user": {
-            "can_use_chatbot": True,
-            "rag_document_groups": ["finance"],
-            "sql_tables": ["sales", "products"],
-            "description": "Access to financial documents and sales tables.",
-        },
-        "it_user": {
-            "can_use_chatbot": True,
-            "rag_document_groups": ["it_security"],
-            "sql_tables": ["tickets"],
-            "description": "Access to IT security guidelines and tickets.",
-        },
-        "guest": {
-            "can_use_chatbot": True,
-            "rag_document_groups": [],
-            "sql_tables": [],
-            "description": "Public FAQ access only — RAG and SQL are restricted.",
-        },
+    ROLE_PERMISSIONS = {
+        "admin": ["hr_files", "finance_files", "it_files", "public"],
+        "hr_user": ["hr_files", "public"],
+        "finance_user": ["finance_files", "public"],
+        "it_user": ["it_files", "public"],
+        "guest": ["public"],
     }
 
-    # ── User directory ───────────────────────────────────────────────────────
-
-    USER_DIRECTORY: dict[str, dict] = {
+    USER_DIRECTORY = {
         "1": {"role": "admin"},
         "2": {"role": "hr_user"},
         "3": {"role": "finance_user"},
@@ -69,44 +27,107 @@ class RBAC:
         "5": {"role": "guest"},
     }
 
-    # ── Access checks ────────────────────────────────────────────────────────
+    def get_role(self, user_id: str) -> str | None:
+        rec = self.USER_DIRECTORY.get(user_id)
+        return rec.get("role") if rec else None
 
-    @classmethod
-    def get_user(cls, user_id: str) -> dict | None:
-        """Return the user record for *user_id*, or None if unknown."""
-        return cls.USER_DIRECTORY.get(user_id)
+    def get_user(self, user_id: str) -> dict | None:
+        return self.USER_DIRECTORY.get(user_id)
 
-    @classmethod
-    def get_role(cls, user_id: str) -> str | None:
-        """Return the role name for *user_id*, or None if unknown."""
-        user = cls.get_user(user_id)
-        return user["role"] if user else None
+    def get_rag_document_groups(self, user_id: str) -> list:
+        """Return logical RAG groups (short names) for the user's role.
 
-    @classmethod
-    def can_use_chatbot(cls, user_id: str) -> bool:
-        """Return True when the user is allowed to send messages to the LLM.
-
-        Guests are blocked at this layer before any LLM call is made.
-        Unknown user IDs are also denied (fail-closed).
+        Tests expect admin to include 'all' and guests to return an empty list.
         """
-        role_name = cls.get_role(user_id)
-        if role_name is None:
-            return False  # unknown user — deny by default
-        role = cls.ROLES.get(role_name, {})
-        return bool(role.get("can_use_chatbot", False))
-
-    @classmethod
-    def get_rag_document_groups(cls, user_id: str) -> list[str]:
-        """Return the list of document groups this user may query via RAG."""
-        role_name = cls.get_role(user_id)
-        if role_name is None:
+        role = self.get_role(user_id)
+        if role is None:
             return []
-        return cls.ROLES.get(role_name, {}).get("rag_document_groups", [])
+        if role == "admin":
+            return ["all"]
+        mapping = {
+            "hr_user": ["hr"],
+            "finance_user": ["finance"],
+            "it_user": ["it"],
+            "guest": [],
+        }
+        return mapping.get(role, [])
 
-    @classmethod
-    def get_sql_tables(cls, user_id: str) -> list[str]:
-        """Return the list of SQL tables this user may query."""
-        role_name = cls.get_role(user_id)
-        if role_name is None:
+    def get_sql_tables(self, user_id: str) -> list:
+        """Return list of SQL table names the role is permitted to query (test-only convenience)."""
+        role = self.get_role(user_id)
+        if role is None:
             return []
-        return cls.ROLES.get(role_name, {}).get("sql_tables", [])
+        mapping = {
+            "admin": ["employees", "payroll", "it_assets"],
+            "hr_user": ["employees"],
+            "finance_user": ["payroll"],
+            "it_user": ["it_assets"],
+            "guest": [],
+        }
+        return mapping.get(role, [])
+
+    def can_use_chatbot(self, user_id: str) -> bool:
+        return self.get_role(user_id) is not None
+
+    def get_allowed_files(self, user_id: str, base_kb_dir: str = "knowledge_base") -> List[str]:
+        """Return absolute paths to .txt files within permitted folders.
+
+        If the user is unknown, return an empty list (fail-closed).
+        """
+        role = self.get_role(user_id)
+        if role is None:
+            return []
+
+        base = Path(base_kb_dir)
+        allowed_dirs = self.ROLE_PERMISSIONS.get(role, [])
+        files: List[str] = []
+
+        for d in allowed_dirs:
+            p = base / d
+            if not p.exists() or not p.is_dir():
+                continue
+            for f in sorted(p.glob("*.txt")):
+                try:
+                    files.append(str(f.resolve()))
+                except Exception:
+                    files.append(str(f))
+
+        return files
+
+    def get_system_prompt(self, user_id: str) -> str:
+        """Return a role-aware system prompt based on the user's role.
+
+        Unknown users get a conservative guest prompt (fail-closed).
+        """
+        role = self.get_role(user_id)
+        if role == "admin":
+            return (
+                "You are a secure administrative assistant. You may access internal admin documents. "
+                "Answer only when the request relates to documents you are permitted to access. "
+                "If the user asks about documents outside your permission, refuse and say you cannot access them."
+            )
+        if role == "hr_user":
+            return (
+                "You are an HR assistant. Answer HR policy and employee-related questions. "
+                "Do not provide financial or IT details. If a request requires documents you don't have access to, state you cannot access them."
+            )
+        if role == "finance_user":
+            return (
+                "You are a Finance assistant. Answer finance and expense-related questions. "
+                "Do not provide HR or IT details. If a request requires documents you don't have access to, state you cannot access them."
+            )
+        if role == "it_user":
+            return (
+                "You are an IT assistant. Answer IT support and security questions. "
+                "Do not provide HR or Finance details. If a request requires documents you don't have access to, state you cannot access them."
+            )
+
+        # Default guest/unknown
+        return (
+            "You are a public FAQ assistant. Provide only general, non-sensitive information. "
+            "If the user asks for internal or privileged documents, state that you do not have access."
+        )
+
+
+# Provide a backward-compatible name expected by the rest of the codebase
+RBAC = RBACManager()

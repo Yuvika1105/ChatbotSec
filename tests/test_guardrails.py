@@ -98,7 +98,7 @@ class TestInputGuardrail:
     @pytest.fixture
     def guardrail(self):
         from app.guardrails.input_guardrail import InputGuardrail
-        return InputGuardrail()
+        return InputGuardrail(groq_api_key="test-key-dummy")
 
     # ── Clean inputs ──────────────────────────────────────────────────────────
 
@@ -146,12 +146,7 @@ class TestInputGuardrail:
 
     def test_layer2_injection_blocked_when_layer1_passes(self, mocker):
         """Simulate Layer 1 passing but Layer 2 catching a subtle injection."""
-        # Patch Layer 1 to pass
-        mocker.patch(
-            "app.guardrails.input_guardrail.PromptInjection.scan",
-            return_value=("text", True, 0.1),
-        )
-        # Patch Layer 2 Groq to return INJECTION
+        # Patch Layer 2 Groq to return INJECTION first
         mock_response = MagicMock()
         mock_response.choices[0].message.content = "INJECTION"
         mocker.patch(
@@ -164,8 +159,15 @@ class TestInputGuardrail:
                 )
             ),
         )
+        # Patch Layer 1's internal llm-guard scanner to pass
+        from llm_guard.input_scanners import PromptInjection
+        mocker.patch.object(
+            PromptInjection,
+            "scan",
+            return_value=("text", True, 0.1),
+        )
         from app.guardrails.input_guardrail import InputGuardrail
-        guardrail = InputGuardrail()
+        guardrail = InputGuardrail(groq_api_key="test-key-dummy")
         result = guardrail.scan("Subtle adversarial phrasing here.")
         assert result["safe"] is False
         assert result["layer"] == "layer2_groq_prompt_guard"
@@ -265,7 +267,7 @@ class TestToxicityChecker:
     @pytest.fixture
     def checker(self):
         from app.guardrails.toxicity_checker import ToxicityChecker
-        return ToxicityChecker()
+        return ToxicityChecker(groq_api_key="test-key-dummy")
 
     def test_clean_response_passes(self, checker):
         result = checker.scan("You have 15 days of annual leave remaining.")
@@ -297,13 +299,15 @@ class TestToxicityChecker:
                 )
             ),
         )
-        # Also patch Layer 1 to pass so we isolate Layer 2
-        mocker.patch(
-            "app.guardrails.toxicity_checker.ToxicityScanner.scan",
+        # Patch Layer 1 to pass so we isolate Layer 2
+        from llm_guard.output_scanners import Toxicity as ToxicityScanner
+        mocker.patch.object(
+            ToxicityScanner,
+            "scan",
             return_value=("text", True, 0.1),
         )
         from app.guardrails.toxicity_checker import ToxicityChecker
-        checker = ToxicityChecker()
+        checker = ToxicityChecker(groq_api_key="test-key-dummy")
         result = checker.scan("Simulated offensive content.")
         assert result["safe"] is False
         assert result["layer"] == "layer2_groq_safeguard"
@@ -335,7 +339,7 @@ class TestOutputGuardrail:
             ),
         )
         from app.guardrails.output_guardrail import OutputGuardrail
-        return OutputGuardrail()
+        return OutputGuardrail(groq_api_key="test-key-dummy")
 
     def test_clean_response_returned_as_is(self, guardrail):
         text = "You have 20 days of annual leave per year."
@@ -357,8 +361,10 @@ class TestOutputGuardrail:
 
     def test_toxic_response_is_blocked(self, mocker):
         """When Layer 1 toxicity fires, the response must be replaced."""
-        mocker.patch(
-            "app.guardrails.toxicity_checker.ToxicityScanner.scan",
+        from llm_guard.output_scanners import Toxicity as ToxicityScanner
+        mocker.patch.object(
+            ToxicityScanner,
+            "scan",
             return_value=("toxic content", False, 0.95),
         )
         import json
@@ -376,7 +382,7 @@ class TestOutputGuardrail:
             ),
         )
         from app.guardrails.output_guardrail import OutputGuardrail, TOXICITY_FALLBACK
-        guardrail = OutputGuardrail()
+        guardrail = OutputGuardrail(groq_api_key="test-key-dummy")
         result = guardrail.process("This is simulated toxic output.")
         assert result["blocked"] is True
         assert result["safe_text"] == TOXICITY_FALLBACK

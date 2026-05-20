@@ -30,21 +30,9 @@ TOXICITY_FALLBACK = (
 )
 
 class OutputGuardrail:
-    def __init__(self, groq_api_key: str = None, prompt_guard_model: str = None, safeguard_model: str = None) -> None:
-        """
-        Initialize the OutputGuardrail with optional configuration.
-        
-        Parameters
-        ----------
-        groq_api_key : str, optional
-            Groq API key. If not provided, falls back to GROQ_API_KEY environment variable.
-        prompt_guard_model : str, optional
-            Prompt Guard model name (for future use).
-        safeguard_model : str, optional
-            Safeguard model name. If not provided, falls back to SAFEGUARD_MODEL environment variable.
-        """
+    def __init__(self, groq_api_key: str = None, safeguard_model: str = None) -> None:
         self._toxicity_checker = ToxicityChecker(
-            groq_api_key=groq_api_key, 
+            groq_api_key=groq_api_key,
             safeguard_model=safeguard_model
         )
         self._pii_detector = PIIDetector()

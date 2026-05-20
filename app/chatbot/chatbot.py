@@ -35,6 +35,7 @@ import logging
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
+from pathlib import Path
 
 from config import Config
 from app.auth.rbac import RBAC
@@ -107,23 +108,12 @@ class SecuredChatbot:
         # ── Security layers ───────────────────────────────────────────────────
         self._input_guardrail = InputGuardrail()
         self._output_guardrail = OutputGuardrail()
+        # Document loader removed — RBACManager controls allowed files
 
     # ── Public interface ──────────────────────────────────────────────────────
 
     def process_message(self, user_id: str, message: str) -> str:
-        """Process one user message through the full security pipeline.
-
-        Parameters
-        ----------
-        user_id: The authenticated user's ID string (e.g. "1").
-        message: The raw user message.
-
-        Returns
-        -------
-        str: The safe, audit-logged response to display to the user.
-        """
-        user = RBAC.get_user(user_id)
-        user_role = user["role"] if user else "unknown"
+        user_role = RBAC.get_role(user_id) or "unknown"
 
         # ── Stage 1: Input guardrail — prompt injection check ─────────────────
         input_result = self._input_guardrail.scan(message)
@@ -177,7 +167,7 @@ class SecuredChatbot:
             return MSG_RBAC_DENIED
 
         # ── Stage 3: LLM call via LangChain + Groq ────────────────────────────
-        raw_llm_response = self._call_llm(message)
+        raw_llm_response = self._call_llm(message, user_id)
 
         if raw_llm_response is None:
             AuditLogger.log(
@@ -224,7 +214,7 @@ class SecuredChatbot:
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _call_llm(self, user_message: str) -> str | None:
+    def _call_llm(self, user_message: str, user_id: str) -> str | None:
         """Send the system prompt + user message to Groq via LangChain.
 
         Returns the model's response string, or None on error.
@@ -234,10 +224,34 @@ class SecuredChatbot:
             HumanMessage   — the user's question
         This is the standard LangChain chat chain pattern.
         """
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_message),
-        ]
+        # System prompt is role-aware and must be first (fail-closed defaults)
+        system_prompt = RBAC.get_system_prompt(user_id)
+        messages = [SystemMessage(content=system_prompt)]
+
+        # Load allowed files for this user using RBAC rules and include
+        # their contents as a secondary system message. If no files are
+        # allowed, this will be empty (fail-closed behavior).
+        try:
+            allowed_paths = RBAC.get_allowed_files(user_id, base_kb_dir="knowledge_base")
+            collected = []
+            for path in allowed_paths:
+                try:
+                    text = Path(path).read_text(encoding="utf-8")
+                except Exception:
+                    text = ""
+                if text:
+                    header = f"--- DOCUMENT: {Path(path).name} ---\n"
+                    collected.append(header + text + "\n\n")
+
+            if collected:
+                docs_text = "".join(collected)
+                messages.append(SystemMessage(content=(
+                    "Relevant documents for this user (use only these for context):\n\n" + docs_text
+                )))
+        except Exception as exc:
+            logger.debug("Failed to load allowed files: %s", exc)
+
+        messages.append(HumanMessage(content=user_message))
 
         try:
             response = self._llm.invoke(messages)
