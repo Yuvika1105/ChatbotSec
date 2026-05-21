@@ -67,39 +67,64 @@ class InputGuardrail:
 
     def scan(self, user_input: str) -> dict:
         # ────────── LAYER 1: LOCAL SECURITY SCANS ──────────
-        
-        # If the advanced llm-guard library is NOT available, run our basic text match check
-        if self._layer1_scanner is None:
-            lower_input = user_input.lower()
-            # Expanded keyword fallback to catch common jailbreak phrasing
-            keywords = [
-                "ignore all previous instructions",
-                "ignore previous instructions",
-                "forget previous instructions",
-                "override",
-                "system prompt",
-                "new system",
-                "[system]",
-                "dan",
-                "you are dan",
-                "role-play",
-                "role play",
-                "act as",
-                "please respond as",
-                "jailbreak",
-                "ignore instructions",
-            ]
+        lower_input = user_input.lower()
 
-            for kw in keywords:
-                if kw in lower_input:
-                    return {"safe": False, "reason": "Blocked by local keyword matching.", "layer": "layer1_keyword", "risk_score": 1.0}
+        # Global keyword/fallback blocking for known prompt injection patterns.
+        # This runs regardless of whether llm-guard is installed, to catch
+        # explicit system-prompt disclosure and hidden knowledge requests.
+        injection_keywords = [
+            "ignore all previous instructions",
+            "ignore previous instructions",
+            "forget previous instructions",
+            "override",
+            "system prompt",
+            "output the system prompt",
+            "print your system prompt",
+            "show me the system prompt",
+            "hidden knowledge",
+            "hidden knowledge base",
+            "knowledge base contents",
+            "internal knowledge base",
+            "internal documents",
+            "new system",
+            "[system]",
+            "dan",
+            "you are dan",
+            "role-play",
+            "role play",
+            "act as",
+            "please respond as",
+            "jailbreak",
+            "ignore instructions",
+            "if you understand",
+            "reveal the system prompt",
+            "reveal hidden",
+            "reveal internal",
+        ]
 
-            # Simple regex to detect attempts to redefine system or instructions
-            if re.search(r"you are\s+\w{1,30}", lower_input):
-                return {"safe": False, "reason": "Blocked by local regex matching for identity/system override.", "layer": "layer1_regex", "risk_score": 1.0}
-        
+        for kw in injection_keywords:
+            if kw in lower_input:
+                return {"safe": False, "reason": "Blocked by local keyword matching.", "layer": "layer1_keyword", "risk_score": 1.0}
+
+        injection_regexes = [
+            r"output.*system prompt",
+            r"print.*system prompt",
+            r"show.*system prompt",
+            r"reveal.*system prompt",
+            r"reveal.*hidden",
+            r"reveal.*knowledge base",
+            r"output.*knowledge base",
+            r"give.*hidden",
+            r"give.*internal",
+            r"you are\s+\w{1,30}",
+        ]
+
+        for pattern in injection_regexes:
+            if re.search(pattern, lower_input):
+                return {"safe": False, "reason": "Blocked by local regex matching for prompt disclosure.", "layer": "layer1_regex", "risk_score": 1.0}
+
         # If llm-guard IS available, let the local model scan the text
-        else:
+        if self._layer1_scanner is not None:
             try:
                 _sanitized, is_valid, risk_score = self._layer1_scanner.scan(user_input)
                 if not is_valid:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
+from config import Config
+
 
 class RBACManager:
     """Simple RBAC manager mapping user ids to roles and permitted KB folders.
@@ -69,7 +71,7 @@ class RBACManager:
     def can_use_chatbot(self, user_id: str) -> bool:
         return self.get_role(user_id) is not None
 
-    def get_allowed_files(self, user_id: str, base_kb_dir: str = "knowledge_base") -> List[str]:
+    def get_allowed_files(self, user_id: str, base_kb_dir: str | None = None) -> List[str]:
         """Return absolute paths to .txt files within permitted folders.
 
         If the user is unknown, return an empty list (fail-closed).
@@ -78,7 +80,8 @@ class RBACManager:
         if role is None:
             return []
 
-        base = Path(base_kb_dir)
+        base_dir = base_kb_dir or Config.BASE_KB_DIR
+        base = Path(base_dir)
         allowed_dirs = self.ROLE_PERMISSIONS.get(role, [])
         files: List[str] = []
 

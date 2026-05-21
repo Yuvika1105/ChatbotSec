@@ -36,6 +36,7 @@ import logging
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 from pathlib import Path
+import re
 
 from config import Config
 from app.auth.rbac import RBAC
@@ -232,7 +233,7 @@ class SecuredChatbot:
         # their contents as a secondary system message. If no files are
         # allowed, this will be empty (fail-closed behavior).
         try:
-            allowed_paths = RBAC.get_allowed_files(user_id, base_kb_dir="knowledge_base")
+            allowed_paths = RBAC.get_allowed_files(user_id, base_kb_dir=Config.BASE_KB_DIR)
             collected = []
             for path in allowed_paths:
                 try:
@@ -241,7 +242,10 @@ class SecuredChatbot:
                     text = ""
                 if text:
                     header = f"--- DOCUMENT: {Path(path).name} ---\n"
-                    collected.append(header + text + "\n\n")
+                    # Mask confidential blocks based on the user's role before
+                    # injecting documents into the system prompt.
+                    masked = _mask_confidential_sections(text, user_role)
+                    collected.append(header + masked + "\n\n")
 
             if collected:
                 docs_text = "".join(collected)
@@ -259,3 +263,26 @@ class SecuredChatbot:
         except Exception as exc:
             logger.error("LLM call failed: %s", exc)
             return None
+
+
+def _mask_confidential_sections(text: str, user_role: str) -> str:
+    """Mask confidential blocks in documents for users lacking the required role.
+
+    Document authors can mark sensitive sections like:
+      [[CONFIDENTIAL:roles=admin,it_user]]secret details[[/CONFIDENTIAL]]
+
+    If the user's role is listed, the inner text is returned unchanged; otherwise
+    it is replaced with a short redaction marker.
+    """
+    pattern = re.compile(r"\[\[CONFIDENTIAL:roles=([^\]]+)\]\](.*?)\[\[/CONFIDENTIAL\]\]", re.DOTALL)
+
+    def _repl(m: re.Match) -> str:
+        roles_csv = m.group(1)
+        secret = m.group(2)
+        allowed_roles = [r.strip() for r in roles_csv.split(",") if r.strip()]
+        if user_role in allowed_roles or "all" in allowed_roles:
+            return secret
+        # keep a short masked placeholder instead of revealing the secret
+        return "[REDACTED]"
+
+    return pattern.sub(_repl, text)

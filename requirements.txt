@@ -5,9 +5,7 @@ langchain-core>=0.3.0
 groq>=0.9.0
 
 # ─── Local ML guardrails ────────────────────────────────────────────────────
-# llm-guard is currently disabled due to Python 3.14 compatibility issues.
-# Layer 1 local ML checks will degrade gracefully.
-# llm-guard>=0.3.10
+llm-guard>=0.3.10
 
 # ─── PII detection and masking ─────────────────────────────────────────────
 presidio-analyzer>=2.2.354

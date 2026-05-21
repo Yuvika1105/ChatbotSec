@@ -9,12 +9,13 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     
     # Core Infrastructure Model Routings
-    MAIN_MODEL = "llama-3.3-70b-versatile"
-    PROMPT_GUARD_MODEL = "meta-llama/llama-prompt-guard-2-86m"
-    SAFEGUARD_MODEL = "openai/gpt-oss-safeguard-20b"
-    
-    # System Destination File Scopes
-    AUDIT_LOG_PATH = os.path.join("logs", "audit.jsonl")
+    MAIN_MODEL = os.getenv("MAIN_MODEL", "llama-3.3-70b-versatile")
+    PROMPT_GUARD_MODEL = os.getenv("PROMPT_GUARD_MODEL", "meta-llama/llama-prompt-guard-2-86m")
+    SAFEGUARD_MODEL = os.getenv("SAFEGUARD_MODEL", "openai/gpt-oss-safeguard-20b")
+
+    # Data and storage defaults
+    BASE_KB_DIR = os.getenv("BASE_KB_DIR", "knowledge_base")
+    AUDIT_LOG_PATH = os.getenv("AUDIT_LOG_PATH", os.path.join("logs", "audit.jsonl"))
 
 # Set environment variables from Config for guardrail reusability
 # This allows guardrails to work with environment variables while maintaining backward compatibility

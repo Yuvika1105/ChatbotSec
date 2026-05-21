@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # Written in plain English so the model can apply it consistently.
 # Extend this list as your organisation's policy evolves.
 CONTENT_POLICY = """
-You are a content safety classifier for a corporate HR chatbot.
+You are a content safety classifier for a corporate chatbot.
 
 Evaluate the AI response below against this policy and return ONLY valid JSON.
 

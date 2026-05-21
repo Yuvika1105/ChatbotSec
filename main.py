@@ -5,10 +5,10 @@ from app.auth.rbac import RBAC
 
 def main():
     print("=" * 60)
-    print("   GENAI SECURITY FOUNDATIONS WORKSPACE: INITIATED ")
+    print("   GENERIC SECURE CHATBOT WORKSPACE: INITIATED ")
     print("=" * 60)
     
-    print("\nProfiles Registered inside Active Session Directory:")
+    print("\nAvailable user profiles for this session:")
     for uid, account in RBAC.USER_DIRECTORY.items():
         print(f"  [{uid}] - Role: {account['role']}")
     print("-" * 60)
