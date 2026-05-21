@@ -72,17 +72,6 @@ Where:
 
 
 class ToxicityChecker:
-    """Two-layer toxicity scanner for LLM output.
-
-    Usage::
-
-        checker = ToxicityChecker()
-        result = checker.scan(llm_response)
-        if not result["safe"]:
-            # replace with a safe fallback — do not show the raw output
-            print(result["reason"])
-    """
-
     # Score above which llm-guard flags the text as toxic.
     TOXICITY_THRESHOLD = 0.5
 
